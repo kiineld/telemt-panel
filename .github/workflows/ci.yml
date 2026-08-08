@@ -1,0 +1,28 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          # go.mod pins "go 1.25.0" (modernc.org/sqlite forced the floor)
+          # and the Dockerfile builds on golang:1.25-alpine for the same
+          # reason. Keep this in lockstep with both or the build breaks.
+          go-version: '1.25'
+      - run: go vet ./...
+      - run: go test -race ./...
+
+  smoke:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the one-click install smoke test
+        run: ./scripts/smoke.sh
