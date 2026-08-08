@@ -83,14 +83,70 @@ type UserInfo struct {
 	Links               UserLinks `json:"links"`
 }
 
-// PatchUser follows JSON Merge Patch semantics: omitted fields are unchanged.
+// Opt is a JSON Merge Patch field with three states: unset (omitted from the
+// payload entirely), null (explicitly removes the server-side override), or a
+// concrete value. A plain *T cannot express this: encoding/json's omitempty
+// only tests pointer nil-ness, so there is no way to make a nil *T serialize
+// as an explicit JSON null while a genuinely-omitted field serializes as
+// nothing at all. Opt separates "was this field set at all" (set) from "what
+// value, if any, does it carry" (val).
+type Opt[T any] struct {
+	set bool
+	val *T
+}
+
+// Value returns a set Opt carrying a concrete value.
+func Value[T any](v T) Opt[T] { return Opt[T]{set: true, val: &v} }
+
+// Null returns a set Opt that marshals as an explicit JSON null, removing the
+// server-side override for the field.
+func Null[T any]() Opt[T] { return Opt[T]{set: true, val: nil} }
+
+// From returns a set Opt from a pointer; a nil p means null.
+func From[T any](p *T) Opt[T] { return Opt[T]{set: true, val: p} }
+
+// IsSet reports whether the field was set at all (to a value or to null), as
+// opposed to being left absent from the payload.
+func (o Opt[T]) IsSet() bool { return o.set }
+
+// PatchUser follows JSON Merge Patch semantics: a field left unset (the zero
+// Opt) is omitted from the payload and leaves the server-side value
+// unchanged. A field set to Null() is sent as an explicit JSON null, which
+// removes the server-side override. A field set to Value(v) is sent as v.
 type PatchUser struct {
-	UserAdTag         *string `json:"user_ad_tag,omitempty"`
-	DataQuotaBytes    *uint64 `json:"data_quota_bytes,omitempty"`
-	ExpirationRFC3339 *string `json:"expiration_rfc3339,omitempty"`
-	MaxTCPConns       *int    `json:"max_tcp_conns,omitempty"`
-	MaxUniqueIPs      *int    `json:"max_unique_ips,omitempty"`
-	Enabled           *bool   `json:"enabled,omitempty"`
+	UserAdTag         Opt[string]
+	DataQuotaBytes    Opt[uint64]
+	ExpirationRFC3339 Opt[string]
+	MaxTCPConns       Opt[int]
+	MaxUniqueIPs      Opt[int]
+	Enabled           Opt[bool]
+}
+
+// MarshalJSON builds the merge-patch payload from only the fields where
+// IsSet() is true. encoding/json's omitempty does nothing useful on
+// struct-typed fields (a zero-value Opt is not "empty" to the encoder), so a
+// custom marshaller is what actually implements the omit/null/value tri-state.
+func (p PatchUser) MarshalJSON() ([]byte, error) {
+	m := make(map[string]any, 6)
+	if p.UserAdTag.IsSet() {
+		m["user_ad_tag"] = p.UserAdTag.val
+	}
+	if p.DataQuotaBytes.IsSet() {
+		m["data_quota_bytes"] = p.DataQuotaBytes.val
+	}
+	if p.ExpirationRFC3339.IsSet() {
+		m["expiration_rfc3339"] = p.ExpirationRFC3339.val
+	}
+	if p.MaxTCPConns.IsSet() {
+		m["max_tcp_conns"] = p.MaxTCPConns.val
+	}
+	if p.MaxUniqueIPs.IsSet() {
+		m["max_unique_ips"] = p.MaxUniqueIPs.val
+	}
+	if p.Enabled.IsSet() {
+		m["enabled"] = p.Enabled.val
+	}
+	return json.Marshal(m)
 }
 
 func (c *Client) Health(ctx context.Context) error {

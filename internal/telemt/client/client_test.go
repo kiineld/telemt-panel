@@ -132,8 +132,7 @@ func TestPatchUserSendsMergePatch(t *testing.T) {
 		_, _ = w.Write([]byte(`{"ok":true,"data":{"username":"user","enabled":true}}`))
 	})
 
-	quota := uint64(500)
-	u, err := c.PatchUser(context.Background(), "user", PatchUser{DataQuotaBytes: &quota})
+	u, err := c.PatchUser(context.Background(), "user", PatchUser{DataQuotaBytes: Value(uint64(500))})
 	if err != nil {
 		t.Fatalf("PatchUser() error = %v", err)
 	}
@@ -145,6 +144,71 @@ func TestPatchUserSendsMergePatch(t *testing.T) {
 	}
 	if _, ok := got["max_tcp_conns"]; ok {
 		t.Error("body contains max_tcp_conns; omitted fields must not be sent")
+	}
+}
+
+func TestPatchUserMarshalUnsetFieldIsAbsent(t *testing.T) {
+	body, err := json.Marshal(PatchUser{})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if len(m) != 0 {
+		t.Errorf("marshalled unset PatchUser = %s, want {}", body)
+	}
+}
+
+func TestPatchUserMarshalNullFieldIsPresentAndNull(t *testing.T) {
+	body, err := json.Marshal(PatchUser{DataQuotaBytes: Null[uint64]()})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(body, &m); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	raw, ok := m["data_quota_bytes"]
+	if !ok {
+		t.Fatalf("marshalled = %s, want key data_quota_bytes present", body)
+	}
+	if string(raw) != "null" {
+		t.Errorf("data_quota_bytes = %s, want null", raw)
+	}
+}
+
+func TestPatchUserMarshalValueFieldIsValue(t *testing.T) {
+	body, err := json.Marshal(PatchUser{MaxTCPConns: Value(200)})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if v, ok := m["max_tcp_conns"]; !ok || v.(float64) != 200 {
+		t.Errorf("max_tcp_conns = %v, want 200", v)
+	}
+}
+
+func TestOptFromNilMeansNull(t *testing.T) {
+	var p *string
+	o := From(p)
+	if !o.IsSet() {
+		t.Fatal("From(nil).IsSet() = false, want true")
+	}
+	body, err := json.Marshal(PatchUser{UserAdTag: o})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(body, &m); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if string(m["user_ad_tag"]) != "null" {
+		t.Errorf("user_ad_tag = %s, want null", m["user_ad_tag"])
 	}
 }
 
