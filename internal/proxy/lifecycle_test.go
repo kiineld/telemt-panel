@@ -180,6 +180,53 @@ func TestRecreateChangesPortAndDomain(t *testing.T) {
 	}
 }
 
+// If the caller's context is cancelled while Recreate's startContainer is
+// polling for health — an HTTP client disconnecting during the up-to-30s
+// wait, for example — the old container has already been destroyed and the
+// new one already created/started, both irreversible. startContainer's
+// terminal state commit must still land: a caller-cancelled ctx must not
+// leave the row stuck at StateRecreating, with no path back to a settled
+// state short of a manual fix or a later Reconcile pass. Modelled on
+// TestCreateCommitsErrorStateWhenContextCancelledDuringHealthWait.
+func TestRecreateCommitsErrorStateWhenContextCancelledDuringHealthWait(t *testing.T) {
+	fake := docker.NewFake()
+	svc, _ := newService(t, fake, &stubClient{})
+	p := mustCreate(t, svc, freePort(t))
+	newPort := freePort(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// cancelingHealthClient (defined in create_test.go) cancels the very
+	// context Recreate was invoked with on its first Health call, then
+	// reports unhealthy — exactly like an HTTP client that hangs up
+	// mid-request while waitHealthy is still polling.
+	svc.deps.NewClient = func(store.Proxy, string) TelemtClient {
+		return &cancelingHealthClient{cancel: cancel}
+	}
+
+	got, err := svc.Recreate(ctx, p.ID, newPort, "bsi.bund.de")
+	if err != nil {
+		t.Fatalf("Recreate() error = %v, want nil even though ctx was cancelled during the health wait", err)
+	}
+	if got.State != store.StateError {
+		t.Errorf("returned State = %q, want error", got.State)
+	}
+
+	// The discriminating assertion: re-read with a fresh, uncancelled
+	// context so a stale in-memory value can't mask a lost commit.
+	stored, err := svc.deps.Store.GetProxy(context.Background(), p.ID)
+	if err != nil {
+		t.Fatalf("GetProxy: %v", err)
+	}
+	if stored.State != store.StateError {
+		t.Errorf("persisted State = %q, want error — StateRecreating here means startContainer's terminal UpdateProxy was lost to context cancellation, leaving the row stuck", stored.State)
+	}
+	if stored.Port != newPort || stored.TLSDomain != "bsi.bund.de" {
+		t.Errorf("persisted Port/TLSDomain = %d/%q, want %d/%q — the port and domain change must have landed even though the health wait was cancelled",
+			stored.Port, stored.TLSDomain, newPort, "bsi.bund.de")
+	}
+}
+
 func TestRecreateRejectsReservedPort(t *testing.T) {
 	fake := docker.NewFake()
 	svc, _ := newService(t, fake, &stubClient{})

@@ -55,7 +55,12 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	if err := os.RemoveAll(s.configDir(id)); err != nil {
 		return fmt.Errorf("proxy: remove config dir: %w", err)
 	}
-	return s.deps.Store.DeleteProxy(ctx, id)
+	// The container and config dir are already gone at this point — an
+	// irreversible action. If this commit were lost to caller cancellation,
+	// the DB row would survive with a ContainerID pointing at nothing,
+	// and Reconcile (State != StateCreating, no matching container) would
+	// rebuild a container the operator explicitly asked to delete.
+	return s.deps.Store.DeleteProxy(context.WithoutCancel(ctx), id)
 }
 
 // LimitsPatch expresses three states per field. A nil outer pointer leaves the
@@ -112,7 +117,11 @@ func (s *Service) UpdateLimits(ctx context.Context, id string, patch LimitsPatch
 		p.StateMessage = "limits saved; live apply failed: " + cerr.Error()
 	}
 
-	if err := s.deps.Store.UpdateProxy(ctx, p); err != nil {
+	// writeConfig above already durably persisted the change to disk; this
+	// commit must survive caller cancellation too, or the DB row's cached
+	// limit values go stale relative to config.toml until the next
+	// successful UpdateLimits call.
+	if err := s.deps.Store.UpdateProxy(context.WithoutCancel(ctx), p); err != nil {
 		return store.Proxy{}, err
 	}
 	return p, nil
@@ -169,6 +178,12 @@ func (s *Service) Recreate(ctx context.Context, id string, port int, tlsDomain s
 
 	old := p.ContainerID
 	p.State = store.StateRecreating
+	// Nothing destructive has happened yet — the old container is still
+	// running untouched. If this commit is lost to cancellation, Recreate
+	// simply returns an error with the row exactly as it was; a caller who
+	// hung up gains nothing from a commit that outlives them here, and there
+	// is no partial, irreversible state to protect. Left on the live ctx
+	// deliberately.
 	if err := s.deps.Store.UpdateProxy(ctx, p); err != nil {
 		return store.Proxy{}, err
 	}
@@ -180,7 +195,12 @@ func (s *Service) Recreate(ctx context.Context, id string, port int, tlsDomain s
 	}
 
 	p.Port, p.TLSDomain, p.ContainerID = port, tlsDomain, ""
-	if err := s.deps.Store.UpdateProxy(ctx, p); err != nil {
+	// The old container was just destroyed above — irreversible. If this
+	// commit were lost to cancellation, the DB row would keep reporting the
+	// OLD port/domain/container while the real container is gone; Reconcile
+	// would then rebuild on the stale OLD port, silently reverting the
+	// change the operator asked for. Must survive cancellation.
+	if err := s.deps.Store.UpdateProxy(context.WithoutCancel(ctx), p); err != nil {
 		return store.Proxy{}, err
 	}
 	if err := s.writeConfig(p); err != nil {
@@ -191,6 +211,17 @@ func (s *Service) Recreate(ctx context.Context, id string, port int, tlsDomain s
 
 // startContainer creates and starts a container for an existing proxy row and
 // records the outcome. Shared by Recreate and Reconcile.
+//
+// All three Store.UpdateProxy calls below use context.WithoutCancel(ctx).
+// Recreate's caller has already destroyed the old container by the time this
+// runs (irreversible), so every outcome recorded here — success or error —
+// must survive the caller's context being cancelled (e.g. an HTTP client
+// disconnecting during the up-to-30s health wait), exactly like Create's
+// terminal commit (see commit c1748fe). Losing any of these to cancellation
+// leaves the row stuck at StateRecreating with no path back except a manual
+// fix or a later Reconcile pass. The Runtime.Create/Start/waitHealthy calls
+// themselves stay on the live ctx so a cancelled caller still aborts those
+// promptly — only the bookkeeping of the outcome is protected.
 func (s *Service) startContainer(ctx context.Context, p store.Proxy) (store.Proxy, error) {
 	id, err := s.deps.Runtime.Create(ctx, docker.ContainerSpec{
 		Name:  "telemt-" + p.ID,
@@ -205,14 +236,14 @@ func (s *Service) startContainer(ctx context.Context, p store.Proxy) (store.Prox
 	})
 	if err != nil {
 		p.State, p.StateMessage = store.StateError, err.Error()
-		_ = s.deps.Store.UpdateProxy(ctx, p)
+		_ = s.deps.Store.UpdateProxy(context.WithoutCancel(ctx), p)
 		return store.Proxy{}, err
 	}
 	p.ContainerID = id
 
 	if err := s.deps.Runtime.Start(ctx, id); err != nil {
 		p.State, p.StateMessage = store.StateError, err.Error()
-		_ = s.deps.Store.UpdateProxy(ctx, p)
+		_ = s.deps.Store.UpdateProxy(context.WithoutCancel(ctx), p)
 		return store.Proxy{}, err
 	}
 
@@ -221,7 +252,11 @@ func (s *Service) startContainer(ctx context.Context, p store.Proxy) (store.Prox
 	} else {
 		p.State, p.StateMessage = store.StateRunning, ""
 	}
-	if err := s.deps.Store.UpdateProxy(ctx, p); err != nil {
+	// This is the call the Important finding named directly: waitHealthy can
+	// return ctx.Err() when the caller disconnects mid-poll, and this commit
+	// must land regardless — the container (or its absence) is already a
+	// fact by this point.
+	if err := s.deps.Store.UpdateProxy(context.WithoutCancel(ctx), p); err != nil {
 		return store.Proxy{}, err
 	}
 	return p, nil
@@ -284,6 +319,11 @@ func (s *Service) Reconcile(ctx context.Context) (ReconcileReport, error) {
 		c, ok := byProxyID[p.ID]
 		if ok {
 			// Keep the recorded container id honest after a daemon restart.
+			// Left on the live ctx deliberately: this is a best-effort,
+			// idempotent sync (its own error is already discarded) with no
+			// destructive action attached — the real container is fine
+			// either way, and a lost update here is corrected by the very
+			// same comparison on the next Reconcile pass.
 			if p.ContainerID != c.ID {
 				p.ContainerID = c.ID
 				_ = s.deps.Store.UpdateProxy(ctx, p)
@@ -294,7 +334,12 @@ func (s *Service) Reconcile(ctx context.Context) (ReconcileReport, error) {
 		if p.State == store.StateCreating {
 			// The panel died mid-create; nothing was ever running.
 			_ = os.RemoveAll(s.configDir(p.ID))
-			if err := s.deps.Store.DeleteProxy(ctx, p.ID); err == nil {
+			// The config dir is already gone above — irreversible. If this
+			// commit were lost to cancellation, the row would survive at
+			// StateCreating with no config left to ever create a container
+			// from, stuck until a manual fix. Must survive cancellation,
+			// same reasoning as Delete's terminal DeleteProxy.
+			if err := s.deps.Store.DeleteProxy(context.WithoutCancel(ctx), p.ID); err == nil {
 				rep.CleanedUp = append(rep.CleanedUp, p.ID)
 			}
 			continue
