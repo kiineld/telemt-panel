@@ -138,39 +138,8 @@ func (s *server) postDelete(w http.ResponseWriter, r *http.Request, adm store.Ad
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-// getProxy, postLimits, postRecreate and getLogs are placeholders for the
-// single-proxy detail page. That page (QR code, connected-IP list, limits
-// form, port/domain recreate, log tail) is a separate task's deliverable;
-// this task only needs these routes to exist, sit behind the same auth and
-// forced-password-change gate as every other proxy route, and behave
-// sensibly (404 for an unknown proxy, otherwise a clear "not built yet")
-// until that page lands.
-func (s *server) getProxy(w http.ResponseWriter, r *http.Request, adm store.Admin) {
-	s.proxyPlaceholder(w, r)
-}
-
-func (s *server) postLimits(w http.ResponseWriter, r *http.Request, adm store.Admin) {
-	s.proxyPlaceholder(w, r)
-}
-
-func (s *server) postRecreate(w http.ResponseWriter, r *http.Request, adm store.Admin) {
-	s.proxyPlaceholder(w, r)
-}
-
-func (s *server) getLogs(w http.ResponseWriter, r *http.Request, adm store.Admin) {
-	s.proxyPlaceholder(w, r)
-}
-
-func (s *server) proxyPlaceholder(w http.ResponseWriter, r *http.Request) {
-	if _, err := s.Proxy.Get(r.Context(), r.PathValue("id")); errors.Is(err, store.ErrNotFound) {
-		http.NotFound(w, r)
-		return
-	} else if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	http.Error(w, "the proxy detail page is not built yet", http.StatusNotImplemented)
-}
+// getProxy, postLimits, postRecreate and getLogs — the single-proxy detail
+// page — live in handlers_detail.go.
 
 func formatTraffic(used uint64, quota *uint64) string {
 	if quota != nil && *quota > 0 {

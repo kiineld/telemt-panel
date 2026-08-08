@@ -40,3 +40,6 @@ details { margin: 14px 0; } summary { cursor: pointer; color: var(--muted); font
   padding: 11px 14px; border-radius: 8px; margin-bottom: 16px; }
 pre { background: #11131a; border: 1px solid var(--border); border-radius: 8px;
   padding: 14px; overflow-x: auto; font-size: 12px; }
+h2 { font-size: 15px; margin: 0 0 10px; }
+.qr { display: block; margin-top: 14px; border-radius: 8px; background: #fff; padding: 8px; }
+.warn { color: var(--warn); }

@@ -1,0 +1,74 @@
+{{define "content"}}
+{{with .Proxy}}
+<div class="toolbar">
+  <h1>{{.Name}}</h1>
+  <a class="muted" href="/">← All proxies</a>
+</div>
+
+<article class="card">
+  <h2>Connection link</h2>
+  <p class="addr">{{$.Host}}:{{.Port}} · {{.TLSDomain}} · <span class="badge">{{.State}}</span></p>
+  {{if .StateMessage}}<p class="muted">{{.StateMessage}}</p>{{end}}
+  <pre>{{$.Link}}</pre>
+  <div x-data="{copied:false}" data-link="{{$.Link}}">
+    <button type="button" @click="navigator.clipboard.writeText($el.parentElement.dataset.link); copied=true; setTimeout(()=>copied=false,1500)"
+            x-text="copied ? 'Copied' : 'Copy link'">Copy link</button>
+  </div>
+  <img class="qr" src="{{$.QR}}" alt="QR code for the proxy link" width="220" height="220">
+</article>
+
+<article class="card">
+  <h2>Connected now</h2>
+  {{if not $.Stats.OK}}
+    <p class="muted">Statistics unavailable.</p>
+  {{else}}
+    {{if $.Stats.Err}}<p class="warn">Warning: {{$.Stats.Err}}</p>{{end}}
+    <p><b>{{$.Stats.UniqueIPs}}</b> unique IPs · <b>{{$.Stats.Connections}}</b> connections</p>
+    {{if $.Stats.IPs}}<pre>{{range $.Stats.IPs}}{{.}}
+{{end}}</pre>{{end}}
+  {{end}}
+</article>
+
+<article class="card">
+  <h2>Limits</h2>
+  <p class="muted">Applied immediately, without dropping connections. Leave a field empty to clear that limit.</p>
+  <form method="post" action="/proxies/{{.ID}}/limits">
+    <div class="grid">
+      <label>Ad tag <input name="ad_tag" value="{{.AdTag}}" pattern="[0-9a-fA-F]{32}"></label>
+      <label>Data quota (GB) <input name="quota_gb" type="number" min="0" value="{{$.QuotaGB}}"></label>
+      <label>Expires <input name="expires" type="date" value="{{$.ExpiresDate}}"></label>
+      <label>Max connections <input name="max_conns" type="number" min="0" value="{{$.MaxConns}}"></label>
+      <label>Max unique IPs <input name="max_ips" type="number" min="0" value="{{$.MaxIPs}}"></label>
+    </div>
+    <button type="submit">Save limits</button>
+  </form>
+</article>
+
+<article class="card">
+  <h2>Port and fake domain</h2>
+  <p class="muted">Restarts the proxy (about 2 seconds). Changing the fake domain invalidates the link above — everyone using it will need the new one.</p>
+  <form method="post" action="/proxies/{{.ID}}/recreate"
+        onsubmit="return confirm('Restart this proxy? If you changed the fake domain, the existing link stops working and everyone using it will need the new one.')">
+    <div class="grid">
+      <label>Port <input name="port" type="number" min="1" max="65535" value="{{.Port}}" required></label>
+      <label>Fake domain <input name="tls_domain" value="{{.TLSDomain}}" required></label>
+    </div>
+    <button type="submit">Apply and restart</button>
+  </form>
+</article>
+
+<article class="card">
+  <h2>Container logs</h2>
+  <p class="muted">Last 200 lines. <a href="/proxies/{{.ID}}/logs" target="_blank" rel="noopener">View raw</a></p>
+  <pre>{{if $.Logs}}{{$.Logs}}{{else}}No logs available.{{end}}</pre>
+</article>
+
+<article class="card">
+  <h2>Delete</h2>
+  <form method="post" action="/proxies/{{.ID}}/delete"
+        onsubmit="return confirm('Delete this proxy for good? The link stops working immediately.')">
+    <button type="submit" style="background:var(--error)">Delete proxy</button>
+  </form>
+</article>
+{{end}}
+{{end}}

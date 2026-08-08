@@ -41,8 +41,25 @@ type page struct {
 	Proxy *store.Proxy
 	Stats poller.Snapshot
 	Link  string
-	QR    string
-	Logs  string
+	// QR is a data: URI. html/template's contextual autoescaper treats data:
+	// URIs in a src attribute as unsafe by default and silently replaces
+	// them with "#ZgotmplZ" — safe framework behavior in general (a data:
+	// URI is a classic way to smuggle a script), but wrong here because QR
+	// is never attacker-influenced: it is qrDataURI's own base64 encoding of
+	// a PNG this process just rendered from the proxy link. template.URL
+	// marks it as pre-vetted so the autoescaper passes it through unchanged.
+	QR   template.URL
+	Logs string
+
+	// The detail page's limits form needs its numeric/date fields
+	// pre-rendered as strings — a *uint64/*int/*string on store.Proxy has no
+	// natural string form an html/template value="" attribute can use
+	// directly, and an empty limit must render as an empty field, not "0" or
+	// "<nil>".
+	QuotaGB     string
+	ExpiresDate string
+	MaxConns    string
+	MaxIPs      string
 }
 
 // NewServer builds the panel's HTTP handler: it parses every template up
@@ -51,10 +68,7 @@ type page struct {
 func NewServer(d ServerDeps) (http.Handler, error) {
 	s := &server{ServerDeps: d, tmpl: map[string]*template.Template{}}
 
-	// proxy.html (the single-proxy detail page) is a later task's
-	// deliverable and does not exist yet, so it is deliberately not parsed
-	// here.
-	for _, name := range []string{"login.html", "change_password.html", "proxies.html"} {
+	for _, name := range []string{"login.html", "change_password.html", "proxies.html", "proxy.html"} {
 		t, err := template.ParseFS(webassets.FS,
 			"templates/layout.html",
 			"templates/_rows.html",
