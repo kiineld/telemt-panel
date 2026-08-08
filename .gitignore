@@ -1,0 +1,9 @@
+# Runtime state — per-proxy telemt configs, SQLite DB, Caddy certs
+/data/
+
+# Local overrides
+.env
+
+# Build output
+/bin/
+/telemt-panel
