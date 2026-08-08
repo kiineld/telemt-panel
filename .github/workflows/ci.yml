@@ -17,6 +17,12 @@ jobs:
           # reason. Keep this in lockstep with both or the build breaks.
           go-version: '1.25'
       - run: go vet ./...
+      # internal/proxy/integration_test.go lives behind "//go:build docker" so
+      # it never runs as part of normal `go test`/`go vet` — without this it
+      # can rot into a compile error unnoticed until someone tries to run it
+      # by hand. This only type-checks it (no Docker daemon needed); the test
+      # itself still requires one and is run separately by the smoke job.
+      - run: go vet -tags docker ./...
       - run: go test -race ./...
 
   smoke:
