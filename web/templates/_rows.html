@@ -1,0 +1,29 @@
+{{define "rows"}}
+{{if not .Rows}}<p class="muted">No proxies yet. Create one above.</p>{{end}}
+<div class="rows">
+{{range .Rows}}
+  <article class="card row state-{{.Proxy.State}}">
+    <div class="row-main">
+      <a class="name" href="/proxies/{{.Proxy.ID}}">{{.Proxy.Name}}</a>
+      <span class="addr">{{$.Host}}:{{.Proxy.Port}}</span>
+      <span class="domain">{{.Proxy.TLSDomain}}</span>
+      <span class="badge">{{.Proxy.State}}</span>
+    </div>
+    <div class="row-stats">
+      {{if .Stats.OK}}
+        {{if .Stats.Err}}<span class="warn" title="{{.Stats.Err}}">warning: {{.Stats.Err}}</span>{{end}}
+        <span title="unique source IPs right now"><b>{{.Stats.UniqueIPs}}</b> users</span>
+        <span><b>{{.Stats.Connections}}</b> conns</span>
+        <span>{{.Traffic}}</span>
+      {{else}}
+        <span class="muted">stats unavailable</span>
+      {{end}}
+    </div>
+    <div class="row-actions" x-data="{copied:false}" data-link="{{.Link}}">
+      <button type="button" @click="navigator.clipboard.writeText($el.parentElement.dataset.link); copied=true; setTimeout(()=>copied=false,1500)"
+              x-text="copied ? 'Copied' : 'Copy link'">Copy link</button>
+    </div>
+  </article>
+{{end}}
+</div>
+{{end}}

@@ -1,0 +1,22 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · telemt-panel</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/vendor/htmx.min.js" defer></script>
+<script src="/static/vendor/htmx-sse.js" defer></script>
+<script src="/static/vendor/alpine.min.js" defer></script>
+</head>
+<body>
+<header>
+  <a class="brand" href="/">telemt-panel</a>
+  {{if .Admin}}<form method="post" action="/logout"><button class="link">Log out</button></form>{{end}}
+</header>
+<main>
+{{if .Error}}<div class="error">{{.Error}}</div>{{end}}
+{{template "content" .}}
+</main>
+</body>
+</html>{{end}}

@@ -1,0 +1,36 @@
+{{define "content"}}
+<div x-data="{open:false}">
+  <div class="toolbar">
+    <h1>Proxies</h1>
+    <button @click="open = !open" x-text="open ? 'Cancel' : 'New proxy'">New proxy</button>
+  </div>
+
+  <form class="card" method="post" action="/proxies" x-show="open" x-cloak>
+    <div class="grid">
+      <label>Name <input name="name" placeholder="main"></label>
+      <label>Port <input name="port" type="number" min="1" max="65535" value="443" required></label>
+      <label>Fake domain
+        <input name="tls_domain" list="domains" value="petrovich.ru" required>
+        <datalist id="domains">
+          <option value="petrovich.ru"><option value="bsi.bund.de"><option value="telekom.com">
+        </datalist>
+      </label>
+      <label>Ad tag <input name="ad_tag" pattern="[0-9a-fA-F]{32}" placeholder="32 hex from @MTProxybot"></label>
+    </div>
+    <details>
+      <summary>Advanced limits</summary>
+      <div class="grid">
+        <label>Data quota (GB) <input name="quota_gb" type="number" min="0" step="1"></label>
+        <label>Expires <input name="expires" type="date"></label>
+        <label>Max connections <input name="max_conns" type="number" min="0"></label>
+        <label>Max unique IPs <input name="max_ips" type="number" min="0"></label>
+      </div>
+    </details>
+    <button type="submit">Create proxy</button>
+  </form>
+
+  <div hx-ext="sse" sse-connect="/events" sse-swap="rows" hx-target="#rows">
+    <div id="rows">{{template "rows" .}}</div>
+  </div>
+</div>
+{{end}}
