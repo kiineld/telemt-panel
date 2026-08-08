@@ -18,6 +18,8 @@ type Fake struct {
 	FailCreate error
 	FailStart  error
 	FailRemove error
+	// FailPing makes Ping return this error, simulating an unreachable daemon.
+	FailPing error
 
 	// Created records every spec passed to Create, in order.
 	Created []ContainerSpec
@@ -31,6 +33,8 @@ type fakeContainer struct {
 func NewFake() *Fake {
 	return &Fake{containers: map[string]*fakeContainer{}, Networks: map[string]string{}}
 }
+
+func (f *Fake) Ping(context.Context) error { return f.FailPing }
 
 func (f *Fake) EnsureNetwork(_ context.Context, name, subnet string) error {
 	f.mu.Lock()

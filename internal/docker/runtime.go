@@ -30,6 +30,8 @@ type ContainerInfo struct {
 }
 
 type Runtime interface {
+	// Ping reports whether the Docker daemon is reachable right now.
+	Ping(ctx context.Context) error
 	EnsureNetwork(ctx context.Context, name, subnet string) error
 	Pull(ctx context.Context, image string) error
 	Create(ctx context.Context, spec ContainerSpec) (string, error)

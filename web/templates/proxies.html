@@ -1,4 +1,28 @@
 {{define "content"}}
+{{if not .DockerOK}}
+<div class="error">
+  Docker is unreachable, so proxies cannot be created, started or stopped right
+  now. The list below is read from the panel's own database and may not reflect
+  what is actually running.
+</div>
+{{end}}
+
+{{if .Orphans}}
+<article class="card">
+  <h2>Unrecognised containers</h2>
+  <p class="muted">These carry the panel's labels but have no matching proxy — usually left over from a database reset.</p>
+  {{range .Orphans}}
+  <div class="row">
+    <span class="addr">{{.Name}} <span class="muted">{{shortID .ID}}</span></span>
+    <form method="post" action="/orphans/{{.ID}}/delete"
+          onsubmit="return confirm('Remove this container? This cannot be undone.')">
+      <button type="submit" style="background:var(--error)">Remove</button>
+    </form>
+  </div>
+  {{end}}
+</article>
+{{end}}
+
 <div x-data="{open:false}">
   <div class="toolbar">
     <h1>Proxies</h1>

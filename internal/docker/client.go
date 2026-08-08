@@ -30,6 +30,13 @@ func NewDockerRuntime() (Runtime, error) {
 	return &dockerRuntime{cli: cli}, nil
 }
 
+func (d *dockerRuntime) Ping(ctx context.Context) error {
+	if _, err := d.cli.Ping(ctx); err != nil {
+		return fmt.Errorf("docker: ping: %w", err)
+	}
+	return nil
+}
+
 func (d *dockerRuntime) EnsureNetwork(ctx context.Context, name, subnet string) error {
 	nets, err := d.cli.NetworkList(ctx, network.ListOptions{
 		Filters: filters.NewArgs(filters.Arg("name", name)),

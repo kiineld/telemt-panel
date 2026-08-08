@@ -66,6 +66,21 @@ func main() {
 	if err := rt.EnsureNetwork(ctx, cfg.Network, cfg.NetworkSubnet); err != nil {
 		log.Printf("warning: ensure network: %v", err)
 	}
+
+	// Pre-pull the configured telemt image in the background so the panel is
+	// reachable immediately and the first proxy creation does not stall for
+	// however long the pull takes. context.WithoutCancel detaches the pull
+	// from the shutdown signal above: an operator hitting Ctrl-C mid-pull
+	// should not tear down a download that Docker itself will keep running on
+	// the daemon side regardless.
+	go func() {
+		if err := rt.Pull(context.WithoutCancel(ctx), cfg.TelemtImage); err != nil {
+			log.Printf("warning: pull %s: %v", cfg.TelemtImage, err)
+			return
+		}
+		log.Printf("telemt image %s ready", cfg.TelemtImage)
+	}()
+
 	if rep, err := svc.Reconcile(ctx); err != nil {
 		log.Printf("warning: reconcile: %v", err)
 	} else {

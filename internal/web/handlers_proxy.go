@@ -53,8 +53,16 @@ func (s *server) getIndex(w http.ResponseWriter, r *http.Request, adm store.Admi
 			page{Title: "Proxies", Admin: &adm, Error: err.Error(), Host: s.host()})
 		return
 	}
-	s.render(w, http.StatusOK, "proxies.html",
-		page{Title: "Proxies", Admin: &adm, Rows: rows, Host: s.host()})
+
+	pg := page{Title: "Proxies", Admin: &adm, Rows: rows, Host: s.host()}
+	pg.DockerOK = s.Proxy.DockerOK(r.Context())
+	if pg.DockerOK {
+		// Orphans() itself calls Runtime.List, which would just fail the same
+		// way Ping did; skip the extra round trip to a daemon already known
+		// to be unreachable.
+		pg.Orphans, _ = s.Proxy.Orphans(r.Context())
+	}
+	s.render(w, http.StatusOK, "proxies.html", pg)
 }
 
 func (s *server) postCreate(w http.ResponseWriter, r *http.Request, adm store.Admin) {

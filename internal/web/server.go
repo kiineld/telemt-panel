@@ -11,6 +11,7 @@ import (
 	"net/http"
 
 	"github.com/kiineld/telemt-panel/internal/config"
+	"github.com/kiineld/telemt-panel/internal/docker"
 	"github.com/kiineld/telemt-panel/internal/poller"
 	"github.com/kiineld/telemt-panel/internal/proxy"
 	"github.com/kiineld/telemt-panel/internal/store"
@@ -60,6 +61,14 @@ type page struct {
 	ExpiresDate string
 	MaxConns    string
 	MaxIPs      string
+
+	// DockerOK and Orphans are populated only by getIndex, since only the
+	// proxy list needs them; every other page leaves DockerOK at its zero
+	// value (false), which is why the "Docker unreachable" banner lives in
+	// proxies.html rather than layout.html — putting it in the shared layout
+	// would make it render spuriously on every page that never sets DockerOK.
+	DockerOK bool
+	Orphans  []docker.ContainerInfo
 }
 
 // NewServer builds the panel's HTTP handler: it parses every template up
@@ -69,7 +78,7 @@ func NewServer(d ServerDeps) (http.Handler, error) {
 	s := &server{ServerDeps: d, tmpl: map[string]*template.Template{}}
 
 	for _, name := range []string{"login.html", "change_password.html", "proxies.html", "proxy.html"} {
-		t, err := template.ParseFS(webassets.FS,
+		t, err := template.New("layout.html").Funcs(templateFuncs).ParseFS(webassets.FS,
 			"templates/layout.html",
 			"templates/_rows.html",
 			"templates/"+name)
@@ -105,8 +114,23 @@ func NewServer(d ServerDeps) (http.Handler, error) {
 	mux.Handle("POST /proxies/{id}/delete", s.authed(s.requirePassword(s.postDelete)))
 	mux.Handle("GET /proxies/{id}/logs", s.authed(s.requirePassword(s.getLogs)))
 	mux.Handle("GET /events", s.authed(s.requirePassword(s.getEvents)))
+	mux.Handle("POST /orphans/{id}/delete", s.authed(s.requirePassword(s.postRemoveOrphan)))
 
 	return mux, nil
+}
+
+// templateFuncs are helpers available to every parsed template.
+var templateFuncs = template.FuncMap{
+	// shortID truncates a container id for display. Real Docker ids are 64
+	// hex characters, but the test fake's ids (e.g. "ctr1") are much shorter;
+	// a bare slice(.ID, 0, 12) in the template would panic on those, so this
+	// clamps the length instead of assuming it.
+	"shortID": func(id string) string {
+		if len(id) > 12 {
+			return id[:12]
+		}
+		return id
+	},
 }
 
 type handlerWithAdmin func(http.ResponseWriter, *http.Request, store.Admin)

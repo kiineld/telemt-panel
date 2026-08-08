@@ -262,6 +262,55 @@ func (s *Service) startContainer(ctx context.Context, p store.Proxy) (store.Prox
 	return p, nil
 }
 
+// Orphans returns panel-labelled containers with no matching proxy row —
+// typically left over from a database reset or a container created outside
+// the panel's control.
+func (s *Service) Orphans(ctx context.Context) ([]docker.ContainerInfo, error) {
+	proxies, err := s.deps.Store.ListProxies(ctx)
+	if err != nil {
+		return nil, err
+	}
+	containers, err := s.deps.Runtime.List(ctx, map[string]string{LabelManaged: "true"})
+	if err != nil {
+		return nil, err
+	}
+
+	known := make(map[string]bool, len(proxies))
+	for _, p := range proxies {
+		known[p.ID] = true
+	}
+
+	var out []docker.ContainerInfo
+	for _, c := range containers {
+		if !known[c.Labels[LabelProxyID]] {
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
+// RemoveOrphan deletes a container only if it is genuinely orphaned right
+// now: containerID is checked against a fresh Orphans() list before removal,
+// so a forged or stale id can never be used to take down a live proxy's
+// container through this path.
+func (s *Service) RemoveOrphan(ctx context.Context, containerID string) error {
+	orphans, err := s.Orphans(ctx)
+	if err != nil {
+		return err
+	}
+	for _, c := range orphans {
+		if c.ID == containerID {
+			return s.deps.Runtime.Remove(ctx, containerID)
+		}
+	}
+	return fmt.Errorf("proxy: container %s is not an orphan", containerID)
+}
+
+// DockerOK reports whether the Docker daemon is reachable right now.
+func (s *Service) DockerOK(ctx context.Context) bool {
+	return s.deps.Runtime.Ping(ctx) == nil
+}
+
 // Logs returns the tail of a proxy's container logs.
 func (s *Service) Logs(ctx context.Context, id string) (string, error) {
 	p, err := s.deps.Store.GetProxy(ctx, id)

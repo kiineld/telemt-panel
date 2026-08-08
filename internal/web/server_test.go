@@ -28,7 +28,11 @@ func (okClient) PatchUser(context.Context, string, client.PatchUser) (client.Use
 	return client.UserInfo{}, nil
 }
 
-func newTestServer(t *testing.T) (http.Handler, *Auth, *proxy.Service) {
+// newTestServerWithFake is the shared test-server constructor: it also
+// returns the docker.Fake backing the service, so tests can flip its Fail*
+// fields (e.g. FailPing) to exercise degraded-state behavior. newTestServer
+// below is the common case that doesn't need the fake.
+func newTestServerWithFake(t *testing.T) (http.Handler, *Auth, *proxy.Service, *docker.Fake) {
 	t.Helper()
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "p.db"))
@@ -37,13 +41,14 @@ func newTestServer(t *testing.T) (http.Handler, *Auth, *proxy.Service) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
+	fake := docker.NewFake()
 	cfg := config.Config{
 		DataDir: dir, Network: "n", NetworkSubnet: "172.28.0.0/16",
 		TelemtImage: "img", PublicHost: "1.2.3.4",
 		ReservedPorts: []int{80, 8443}, PollInterval: time.Hour,
 	}
 	svc := proxy.New(proxy.Deps{
-		Store: st, Runtime: docker.NewFake(), Cfg: cfg, HostDataDir: dir,
+		Store: st, Runtime: fake, Cfg: cfg, HostDataDir: dir,
 		NewClient:    func(store.Proxy, string) proxy.TelemtClient { return okClient{} },
 		HealthBudget: 50 * time.Millisecond,
 	})
@@ -55,6 +60,11 @@ func newTestServer(t *testing.T) (http.Handler, *Auth, *proxy.Service) {
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
+	return h, auth, svc, fake
+}
+
+func newTestServer(t *testing.T) (http.Handler, *Auth, *proxy.Service) {
+	h, auth, svc, _ := newTestServerWithFake(t)
 	return h, auth, svc
 }
 
