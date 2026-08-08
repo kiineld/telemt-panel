@@ -20,13 +20,17 @@ docker compose logs panel | grep "admin password"
 
 For a real certificate instead of the self-signed one, put a domain in `.env`
 as `PANEL_DOMAIN=panel.example.com` (A record pointing here) and re-run
-`docker compose up -d`.
+`docker compose up -d`. The panel then lives at `https://panel.example.com:8443`
+— keep the port, since `443` belongs to a proxy. Reaching it by IP keeps
+working with the self-signed certificate, so a wrong DNS record does not lock
+you out.
 
 ## Why port 8443?
 
-Caddy serves the panel on `:8443` and uses `:80` only for the ACME challenge.
-That leaves host port `443` free to assign to a proxy, where fake-TLS traffic
-blends in with ordinary HTTPS.
+Caddy serves the panel on `:8443`. It also listens on `:80`, which answers the
+ACME challenge and redirects browsers that omit the port. That leaves host port
+`443` free to assign to a proxy, where fake-TLS traffic blends in with ordinary
+HTTPS.
 
 ## Security
 

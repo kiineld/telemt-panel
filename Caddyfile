@@ -3,13 +3,48 @@
 	# host port 443 stays free for an MTProto proxy.
 	http_port 80
 	https_port 8443
+
+	# Caddy's built-in HTTP->HTTPS redirect omits the port whenever it equals
+	# https_port, so it would send browsers to https://<host>/ — port 443,
+	# which on this host is an MTProto proxy, not the panel. The :80 block
+	# below redirects to :8443 explicitly instead. This disables only the
+	# redirects; certificate automation and the ACME challenge are untouched.
+	auto_https disable_redirects
 }
 
-{$PANEL_DOMAIN::8443} {
-	# With PANEL_DOMAIN unset this matches any host on :8443 and Caddy issues
-	# an internal self-signed certificate. Setting PANEL_DOMAIN switches it to
-	# a real Let's Encrypt certificate with no other change.
-	@nodomain expression {$PANEL_DOMAIN:""} == ""
+# Port 80 is here for the ACME HTTP-01 challenge, which Caddy answers ahead of
+# any route below. Anything else arriving here is a browser that omitted the
+# port, so send it to the port the panel is actually on.
+:80 {
+	redir https://{host}:8443{uri} 308
+}
+
+# The panel's own name. docker-compose.yml computes PANEL_SITE as
+# "<PANEL_DOMAIN>:8443", falling back to "localhost:8443" when PANEL_DOMAIN is
+# empty or unset. That fallback has to be computed there rather than here:
+# Caddy's {$VAR:default} only applies when the variable is absent entirely,
+# and Compose always passes the variable through — as an empty string when the
+# user has not set one — so a default written here would never fire. The
+# default below therefore only covers running Caddy outside Compose.
+#
+# There is deliberately no tls directive: Caddy selects the issuer from the
+# site name. "localhost" is signed by Caddy's internal CA and reaches no
+# public CA, while a real domain gets a publicly-trusted certificate over
+# HTTP-01 on :80. That name-based selection is the entire domain switch — a
+# request matcher cannot gate `tls`, which is why the previous @nodomain
+# matcher was not merely unused but unusable.
+{$PANEL_SITE:localhost:8443} {
+	reverse_proxy panel:8080
+}
+
+# Reaching the panel by IP — how the install is used before any domain is set,
+# and the way back in afterwards if DNS is wrong. A client connecting to a bare
+# IP sends no SNI, and this block names no host, so there is no name to issue a
+# certificate for in advance; on_demand mints one during the handshake.
+# Pinning it to the internal CA keeps that cheap and keeps invented SNI values
+# away from a public CA. Caddy logs an on-demand abuse warning for this block
+# at startup — keep the panel firewalled, as the README says.
+:8443 {
 	tls internal {
 		on_demand
 	}

@@ -7,7 +7,13 @@ services:
       - "80:80"
       - "8443:8443"
     environment:
-      - PANEL_DOMAIN=${PANEL_DOMAIN:-}
+      # The domain switch is computed here rather than in the Caddyfile.
+      # Compose's ${VAR:-default} treats an empty value like an unset one,
+      # while Caddy's {$VAR:default} falls back only when the variable is
+      # absent — and Compose always passes it through, so a Caddyfile-side
+      # default would never fire for the shipped ".env" with an empty
+      # PANEL_DOMAIN. Result: "<domain>:8443", else "localhost:8443".
+      - PANEL_SITE=${PANEL_DOMAIN:-localhost}:8443
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./data/caddy/data:/data
