@@ -111,6 +111,31 @@ func TestPollOnceRecordsFailure(t *testing.T) {
 	}
 }
 
+func TestPollOnceFlagsEmptyUserListAsOKWithWarning(t *testing.T) {
+	// A reachable control API with no error but zero users must not look
+	// like a healthy, idle proxy: OK stays true (so the failure/backoff
+	// counter does not creep up and lock it out of retrying), but Err must
+	// carry a non-fatal note so this state is distinguishable from a normal
+	// healthy poll.
+	src := &fakeSource{
+		proxies: []store.Proxy{{ID: "a"}},
+		clients: map[string]*fakeClient{"a": {}}, // no err, no users
+	}
+	p := New(src, time.Second)
+	p.PollOnce(context.Background())
+
+	got, ok := p.Get("a")
+	if !ok {
+		t.Fatal("Get(a) not found")
+	}
+	if !got.OK {
+		t.Error("OK = false, want true — a reachable API is not a failure")
+	}
+	if got.Err == "" {
+		t.Error("Err should be non-empty when telemt reports no users, so this is distinguishable from a healthy idle proxy")
+	}
+}
+
 func TestPollOnceHandlesUnreachableClient(t *testing.T) {
 	src := &fakeSource{
 		proxies:   []store.Proxy{{ID: "a"}},

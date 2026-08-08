@@ -163,19 +163,28 @@ func (p *Poller) pollProxy(ctx context.Context, pr store.Proxy) Snapshot {
 		return snap
 	}
 
-	// A proxy holds exactly one user in production, but a reachable control
-	// API that reports zero users (e.g. one that hasn't finished starting)
-	// is still a successful poll, not a failure — there is simply nothing
-	// to report yet.
+	// A reachable control API that reports zero users is still a successful
+	// poll (OK stays true, so the failure/backoff counter does not creep up
+	// and lock the proxy out of retrying) — but it is never a transient
+	// "still starting up" state: the proxy's one user is written into
+	// config.toml before the container starts, and waitHealthy only calls
+	// Health(), never Users(). So an empty list here means something is
+	// actually wrong — config drift, a telemt bug, or the user table being
+	// lost out-of-band (e.g. telemt restarted and forgot its state while its
+	// API stayed up). Surface that in Err so it reads as "reachable, but
+	// something is wrong" rather than being indistinguishable from a
+	// healthy, idle proxy.
 	snap.OK = true
-	if len(users) > 0 {
-		u := users[0]
-		snap.UniqueIPs = u.ActiveUniqueIPs
-		snap.IPs = u.ActiveUniqueIPsList
-		snap.Connections = u.CurrentConnections
-		snap.TotalOctets = u.TotalOctets
-		snap.Links = u.Links.TLS
+	if len(users) == 0 {
+		snap.Err = "telemt reported no users for this proxy (expected exactly one) — check for config drift or lost state"
+		return snap
 	}
+	u := users[0]
+	snap.UniqueIPs = u.ActiveUniqueIPs
+	snap.IPs = u.ActiveUniqueIPsList
+	snap.Connections = u.CurrentConnections
+	snap.TotalOctets = u.TotalOctets
+	snap.Links = u.Links.TLS
 	return snap
 }
 
