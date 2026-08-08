@@ -134,6 +134,106 @@ func TestRealDockerLifecycle(t *testing.T) {
 	}
 }
 
+// TestRealDockerLifecycleWithEmptyPublicHost is the case that would have
+// caught Finding 1 of the final pre-merge review: the shipped default is an
+// EMPTY PANEL_PUBLIC_HOST (docker-compose.yml's
+// PANEL_PUBLIC_HOST=${PANEL_PUBLIC_HOST:-}), and on that path the panel must
+// end up surfacing a link with a real host — never the literal placeholder
+// "SERVER-IP" — by preferring telemt's own self-reported link once the
+// container is healthy (ReconcileLink; see also the web package's linkFor).
+// TestRealDockerLifecycle above deliberately does not exercise this: it sets
+// PublicHost so it can assert the two links' secrets agree while excusing
+// host divergence, which can never fail on a wrong/placeholder host.
+//
+// Run with: go test -tags docker ./internal/proxy/ -run TestRealDockerLifecycleWithEmptyPublicHost -v -timeout 10m
+func TestRealDockerLifecycleWithEmptyPublicHost(t *testing.T) {
+	rt, err := docker.NewDockerRuntime()
+	if err != nil {
+		t.Skipf("no docker daemon: %v", err)
+	}
+
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "panel.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	svc := New(Deps{
+		Store: st, Runtime: rt, HostDataDir: dir,
+		Cfg: config.Config{
+			DataDir: dir, Network: "mtpanel_test_net2", NetworkSubnet: "172.30.0.0/16",
+			TelemtImage: "ghcr.io/telemt/telemt:latest",
+			// Deliberately unset — the shipped docker-compose.yml default.
+			PublicHost:    "",
+			ReservedPorts: []int{80, 8443},
+		},
+		HealthBudget: 90 * time.Second,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	defer cancel()
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve a free port: %v", err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	_ = l.Close()
+
+	p, err := svc.Create(ctx, CreateRequest{
+		Name: "integration-empty-host", Port: port, TLSDomain: "petrovich.ru",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	t.Cleanup(func() { _ = svc.Delete(context.Background(), p.ID) })
+
+	if p.State != store.StateRunning {
+		logs, _ := svc.Logs(ctx, p.ID)
+		t.Fatalf("State = %q (%s); container logs:\n%s", p.State, p.StateMessage, logs)
+	}
+
+	c, err := svc.ClientFor(ctx, p)
+	if err != nil {
+		t.Fatalf("ClientFor() error = %v", err)
+	}
+	users, err := c.Users(ctx)
+	if err != nil {
+		t.Fatalf("Users() error = %v", err)
+	}
+	if len(users) != 1 {
+		t.Fatalf("users = %+v, want exactly one", users)
+	}
+	if len(users[0].Links.TLS) == 0 {
+		t.Fatal("telemt returned no TLS links; cannot reconcile against an empty PublicHost")
+	}
+	telemtLink := users[0].Links.TLS[0]
+	t.Logf("telemt link: %s", telemtLink)
+
+	// This is what the panel actually shows an operator: the locally
+	// computed link (which, with PublicHost empty, is the SERVER-IP
+	// placeholder) reconciled against telemt's own reported link.
+	localLink := svc.Link(p)
+	surfaced, fromTelemt := ReconcileLink(localLink, users[0].Links.TLS)
+	t.Logf("local link:    %s", localLink)
+	t.Logf("surfaced link: %s", surfaced)
+
+	if !fromTelemt {
+		t.Error("ReconcileLink() did not prefer telemt's self-reported link with PublicHost unset")
+	}
+	if strings.Contains(surfaced, "SERVER-IP") {
+		t.Errorf("surfaced link = %q, must not contain the literal SERVER-IP placeholder", surfaced)
+	}
+	if surfaced != telemtLink {
+		t.Errorf("surfaced link = %q, want it to agree with telemt's own reported link %q", surfaced, telemtLink)
+	}
+
+	if err := svc.Delete(ctx, p.ID); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+}
+
 // secretParam extracts the "secret" query parameter's value from a tg:// or
 // https://t.me/proxy link without requiring the two hosts to agree — only
 // the ?server= part differs legitimately between telemt's self-reported link

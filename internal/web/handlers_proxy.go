@@ -17,6 +17,7 @@ type row struct {
 	Proxy   store.Proxy
 	Stats   poller.Snapshot
 	Link    string
+	LinkOK  bool
 	Traffic string
 }
 
@@ -30,9 +31,10 @@ func (s *server) buildRows(r *http.Request) ([]row, error) {
 	out := make([]row, 0, len(proxies))
 	for _, p := range proxies {
 		snap := stats[p.ID]
+		link, ok := s.linkFor(p, snap)
 		out = append(out, row{
 			Proxy: p, Stats: snap,
-			Link:    s.Proxy.Link(p),
+			Link: link, LinkOK: ok,
 			Traffic: formatTraffic(snap.TotalOctets, p.DataQuotaBytes),
 		})
 	}
@@ -44,6 +46,24 @@ func (s *server) host() string {
 		return s.Cfg.PublicHost
 	}
 	return "SERVER-IP"
+}
+
+// linkFor decides which tg:// link, if any, to show for a proxy, via
+// proxy.ReconcileLink — see its doc comment for the "prefer telemt's
+// self-reported link" reasoning.
+//
+// When no telemt link is available yet AND PublicHost is unset, there is
+// nothing usable to show: the locally computed link would embed the literal
+// placeholder host "SERVER-IP", which is not a real address and would
+// silently reach nobody if copied or scanned. ok is false in that case so
+// the caller shows a warning instead of a broken link and its QR code.
+func (s *server) linkFor(p store.Proxy, snap poller.Snapshot) (link string, ok bool) {
+	local := ""
+	if s.Cfg.PublicHost != "" {
+		local = s.Proxy.Link(p)
+	}
+	l, fromTelemt := proxy.ReconcileLink(local, snap.Links)
+	return l, fromTelemt || l != ""
 }
 
 func (s *server) getIndex(w http.ResponseWriter, r *http.Request, adm store.Admin) {
@@ -125,6 +145,8 @@ func (s *server) postCreate(w http.ResponseWriter, r *http.Request, adm store.Ad
 			msg = fmt.Sprintf("Port %d is reserved by the panel's web server. Pick another.", port)
 		case errors.Is(err, store.ErrPortTaken):
 			msg = fmt.Sprintf("Port %d is already used by another proxy.", port)
+		case errors.Is(err, proxy.ErrPortConflict):
+			msg = fmt.Sprintf("Port %d is already in use by something else on this host (outside the panel's tracking) — Docker rejected it. Pick another port or free that one.", port)
 		}
 		s.createError(w, r, adm, msg)
 		return

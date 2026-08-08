@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -234,6 +235,38 @@ func TestRecreateRejectsReservedPort(t *testing.T) {
 
 	if _, err := svc.Recreate(context.Background(), p.ID, 80, "a.com"); !errors.Is(err, ErrPortReserved) {
 		t.Fatalf("Recreate() error = %v, want ErrPortReserved", err)
+	}
+}
+
+// TestRecreateSurfacesPortConflict covers Finding 5 on the Recreate path
+// (startContainer, shared with Reconcile): a raw Docker port-conflict string
+// from Start must reach the caller wrapped as ErrPortConflict, naming the
+// port, not verbatim.
+func TestRecreateSurfacesPortConflict(t *testing.T) {
+	fake := docker.NewFake()
+	svc, _ := newService(t, fake, &stubClient{})
+	p := mustCreate(t, svc, freePort(t))
+	newPort := freePort(t)
+
+	fake.FailStart = errors.New(`Bind for 0.0.0.0:` + strconv.Itoa(newPort) + ` failed: port is already allocated`)
+
+	_, err := svc.Recreate(context.Background(), p.ID, newPort, "bsi.bund.de")
+	if !errors.Is(err, ErrPortConflict) {
+		t.Fatalf("Recreate() error = %v, want it to wrap ErrPortConflict", err)
+	}
+	if !strings.Contains(err.Error(), strconv.Itoa(newPort)) {
+		t.Errorf("Recreate() error = %v, want it to name the conflicting port %d", err, newPort)
+	}
+
+	got, gerr := svc.Get(context.Background(), p.ID)
+	if gerr != nil {
+		t.Fatalf("Get() error = %v", gerr)
+	}
+	if got.State != store.StateError {
+		t.Errorf("State = %q, want error", got.State)
+	}
+	if !strings.Contains(got.StateMessage, strconv.Itoa(newPort)) {
+		t.Errorf("StateMessage = %q, want it to name the conflicting port %d", got.StateMessage, newPort)
 	}
 }
 

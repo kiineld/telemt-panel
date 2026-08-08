@@ -9,12 +9,16 @@
   <h2>Connection link</h2>
   <p class="addr">{{$.Host}}:{{.Port}} · {{.TLSDomain}} · <span class="badge">{{.State}}</span></p>
   {{if .StateMessage}}<p class="muted">{{.StateMessage}}</p>{{end}}
+  {{if $.LinkOK}}
   <pre>{{$.Link}}</pre>
   <div x-data="{copied:false}" data-link="{{$.Link}}">
     <button type="button" @click="navigator.clipboard.writeText($el.parentElement.dataset.link); copied=true; setTimeout(()=>copied=false,1500)"
             x-text="copied ? 'Copied' : 'Copy link'">Copy link</button>
   </div>
   <img class="qr" src="{{$.QR}}" alt="QR code for the proxy link" width="220" height="220">
+  {{else}}
+  <p class="warn">No usable link yet. Set <code>PANEL_PUBLIC_HOST</code> in <code>.env</code> and restart the panel for an immediate link, or wait for this proxy to become healthy so telemt can report its own detected address.</p>
+  {{end}}
 </article>
 
 <article class="card">

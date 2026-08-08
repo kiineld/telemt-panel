@@ -19,9 +19,15 @@
         <span class="muted">stats unavailable</span>
       {{end}}
     </div>
-    <div class="row-actions" x-data="{copied:false}" data-link="{{.Link}}">
-      <button type="button" @click="navigator.clipboard.writeText($el.parentElement.dataset.link); copied=true; setTimeout(()=>copied=false,1500)"
-              x-text="copied ? 'Copied' : 'Copy link'">Copy link</button>
+    <div class="row-actions">
+      {{if .LinkOK}}
+      <div x-data="{copied:false}" data-link="{{.Link}}">
+        <button type="button" @click="navigator.clipboard.writeText($el.parentElement.dataset.link); copied=true; setTimeout(()=>copied=false,1500)"
+                x-text="copied ? 'Copied' : 'Copy link'">Copy link</button>
+      </div>
+      {{else}}
+      <span class="warn" title="Set PANEL_PUBLIC_HOST in .env and restart the panel, or wait for this proxy to become healthy so telemt can report its own address.">no link yet</span>
+      {{end}}
     </div>
   </article>
 {{end}}

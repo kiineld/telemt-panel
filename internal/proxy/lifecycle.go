@@ -242,6 +242,7 @@ func (s *Service) startContainer(ctx context.Context, p store.Proxy) (store.Prox
 	p.ContainerID = id
 
 	if err := s.deps.Runtime.Start(ctx, id); err != nil {
+		err = wrapPortConflict(p.Port, err)
 		p.State, p.StateMessage = store.StateError, err.Error()
 		_ = s.deps.Store.UpdateProxy(context.WithoutCancel(ctx), p)
 		return store.Proxy{}, err

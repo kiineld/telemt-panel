@@ -25,6 +25,20 @@ as `PANEL_DOMAIN=panel.example.com` (A record pointing here) and re-run
 working with the self-signed certificate, so a wrong DNS record does not lock
 you out.
 
+## Connection links
+
+Each proxy's `tg://` link and QR code need a real host to embed. Once a
+proxy's container reports healthy, the panel picks up telemt's own
+self-reported link (telemt detects the server's external address itself),
+so **most installs need nothing set here** — create a proxy, wait for it to
+turn healthy, and the link just works.
+
+Until that first happens, though, the panel has no address it can vouch for
+and shows a warning instead of a link that would not actually work. If you
+want a link to appear immediately, or you're behind NAT/a load balancer
+where telemt's own detection would guess wrong, set `PANEL_PUBLIC_HOST` in
+`.env` to the address clients should use, and re-run `docker compose up -d`.
+
 ## Why port 8443?
 
 Caddy serves the panel on `:8443`. It also listens on `:80`, which answers the

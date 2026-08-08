@@ -179,7 +179,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (store.Proxy, e
 	// 5. Start it.
 	if err := s.deps.Runtime.Start(ctx, id); err != nil {
 		rollback()
-		return store.Proxy{}, err
+		return store.Proxy{}, wrapPortConflict(p.Port, err)
 	}
 
 	// Past this point the container stays even on failure.
@@ -203,8 +203,12 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (store.Proxy, e
 	return p, nil
 }
 
-// Link returns the tg:// fake-TLS link for a proxy, computed locally so it can
-// be shown before the container is healthy.
+// Link returns the tg:// fake-TLS link for a proxy, computed locally so it
+// can be shown before the container is healthy. It always returns something
+// — falling back to the literal placeholder host "SERVER-IP" when
+// Cfg.PublicHost is unset — because it does not know whether a better,
+// telemt-reported value exists; see ReconcileLink, which callers must use
+// before presenting a link to an operator.
 func (s *Service) Link(p store.Proxy) string {
 	host := s.deps.Cfg.PublicHost
 	if host == "" {
@@ -215,6 +219,27 @@ func (s *Service) Link(p store.Proxy) string {
 		return ""
 	}
 	return l
+}
+
+// ReconcileLink decides which tg:// link to present to an operator, given the
+// panel's own locally computed link and telemt's self-reported ones (its
+// control API's links.tls[], once the proxy is healthy and the poller has
+// picked up a snapshot).
+//
+// Per the design spec's "Link generation" section: the panel computes the
+// link locally so something appears immediately, then once the container is
+// healthy reconciles against telemt's own value and prefers it — telemt
+// resolves the host itself via its own external-IP detection, which is what
+// makes the zero-config (no PANEL_PUBLIC_HOST) install path work at all.
+//
+// fromTelemt reports whether telemtLinks supplied the result, which callers
+// use to decide whether an empty/placeholder local link is still acceptable
+// to show (see the web package's linkFor).
+func ReconcileLink(local string, telemtLinks []string) (l string, fromTelemt bool) {
+	if len(telemtLinks) > 0 && telemtLinks[0] != "" {
+		return telemtLinks[0], true
+	}
+	return local, false
 }
 
 func (s *Service) waitHealthy(ctx context.Context, p store.Proxy) error {

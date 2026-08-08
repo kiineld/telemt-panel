@@ -42,25 +42,29 @@ func (s *server) getProxy(w http.ResponseWriter, r *http.Request, adm store.Admi
 		return
 	}
 
-	link := s.Proxy.Link(p)
-	qr, err := qrDataURI(link)
-	if err != nil {
-		// A broken QR image isn't worth failing the whole page over — the
-		// link text and copy button above it still work without it.
-		qr = ""
-	}
 	snap, _ := s.Poller.Get(p.ID)
+	link, linkOK := s.linkFor(p, snap)
+
+	var qr string
+	if linkOK {
+		q, err := qrDataURI(link)
+		if err == nil {
+			// A broken QR image isn't worth failing the whole page over —
+			// the link text and copy button above it still work without it.
+			qr = q
+		}
+	}
 	logs, _ := s.Proxy.Logs(r.Context(), p.ID)
 
-	s.render(w, http.StatusOK, "proxy.html", detailPage(adm, p, snap, link, qr, logs, s.host()))
+	s.render(w, http.StatusOK, "proxy.html", detailPage(adm, p, snap, link, linkOK, qr, logs, s.host()))
 }
 
 // detailPage fills the page fields the detail view needs beyond what every
 // page carries (Title/Admin/Host).
-func detailPage(adm store.Admin, p store.Proxy, snap poller.Snapshot, link, qr, logs, host string) page {
+func detailPage(adm store.Admin, p store.Proxy, snap poller.Snapshot, link string, linkOK bool, qr, logs, host string) page {
 	pg := page{
 		Title: p.Name, Admin: &adm, Host: host,
-		Proxy: &p, Stats: snap, Link: link, QR: template.URL(qr), Logs: logs,
+		Proxy: &p, Stats: snap, Link: link, LinkOK: linkOK, QR: template.URL(qr), Logs: logs,
 	}
 	if p.DataQuotaBytes != nil {
 		pg.QuotaGB = strconv.FormatUint(*p.DataQuotaBytes/(1024*1024*1024), 10)
@@ -161,6 +165,9 @@ func (s *server) postRecreate(w http.ResponseWriter, r *http.Request, adm store.
 		return
 	case errors.Is(err, store.ErrPortTaken):
 		http.Error(w, fmt.Sprintf("port %d is already used by another proxy", port), http.StatusBadRequest)
+		return
+	case errors.Is(err, proxy.ErrPortConflict):
+		http.Error(w, fmt.Sprintf("port %d is already in use by something else on this host (outside the panel's tracking) — Docker rejected it", port), http.StatusBadRequest)
 		return
 	case err != nil:
 		http.Error(w, err.Error(), http.StatusInternalServerError)

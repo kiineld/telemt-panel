@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -207,14 +208,23 @@ func TestCreateRollsBackOnContainerCreateFailure(t *testing.T) {
 
 func TestCreateRollsBackOnStartFailure(t *testing.T) {
 	fake := docker.NewFake()
-	fake.FailStart = errors.New("port already allocated")
+	fake.FailStart = errors.New(`Bind for 0.0.0.0:14999 failed: port is already allocated`)
 	svc, dir := newService(t, fake, &stubClient{})
+	port := freePort(t)
 
 	_, err := svc.Create(context.Background(), CreateRequest{
-		Name: "x", Port: freePort(t), TLSDomain: "a.com",
+		Name: "x", Port: port, TLSDomain: "a.com",
 	})
 	if err == nil {
 		t.Fatal("Create() error = nil, want failure")
+	}
+	// Finding 5: Docker's raw daemon string must not reach the caller
+	// unwrapped — it is recognized as a port conflict and named as such.
+	if !errors.Is(err, ErrPortConflict) {
+		t.Errorf("Create() error = %v, want it to wrap ErrPortConflict", err)
+	}
+	if !strings.Contains(err.Error(), strconv.Itoa(port)) {
+		t.Errorf("Create() error = %v, want it to name the conflicting port %d", err, port)
 	}
 	if fake.Count() != 0 {
 		t.Errorf("fake.Count() = %d, want 0 — the container should be removed", fake.Count())
@@ -317,5 +327,47 @@ func TestLink(t *testing.T) {
 	want := "tg://proxy?server=1.2.3.4&port=443&secret=ee00112233445566778899aabbccddeeff706574726f766963682e7275"
 	if got := svc.Link(p); got != want {
 		t.Errorf("Link() =\n  %q\nwant\n  %q", got, want)
+	}
+}
+
+// TestLinkFallsBackToPlaceholderHost documents Link()'s known, deliberate
+// behavior when Cfg.PublicHost is unset: it still returns something (the
+// literal placeholder "SERVER-IP"), because Link() alone cannot know whether
+// a better, telemt-reported value exists. Callers must run the result
+// through ReconcileLink before showing it to an operator — see
+// TestReconcileLinkPrefersTelemt below and the web package's linkFor.
+func TestLinkFallsBackToPlaceholderHost(t *testing.T) {
+	fake := docker.NewFake()
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "panel.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	svc := New(Deps{
+		Store: st, Runtime: fake,
+		Cfg:         config.Config{DataDir: dir, Network: "n", NetworkSubnet: "172.28.0.0/16", TelemtImage: "img", ReservedPorts: []int{80, 8443}},
+		HostDataDir: dir,
+	})
+	p := store.Proxy{Port: 443, TLSDomain: "petrovich.ru", Secret: "00112233445566778899aabbccddeeff"}
+
+	got := svc.Link(p)
+	if !strings.Contains(got, "server=SERVER-IP") {
+		t.Errorf("Link() = %q, want it to fall back to the SERVER-IP placeholder when PublicHost is unset", got)
+	}
+}
+
+func TestReconcileLinkPrefersTelemt(t *testing.T) {
+	local := "tg://proxy?server=SERVER-IP&port=443&secret=eeaa"
+	telemt := "tg://proxy?server=203.0.113.5&port=443&secret=eeaa"
+
+	if got, from := ReconcileLink(local, []string{telemt}); got != telemt || !from {
+		t.Errorf("ReconcileLink() = (%q, %v), want (%q, true)", got, from, telemt)
+	}
+	if got, from := ReconcileLink(local, nil); got != local || from {
+		t.Errorf("ReconcileLink() = (%q, %v), want (%q, false) when telemt has no link yet", got, from, local)
+	}
+	if got, from := ReconcileLink(local, []string{""}); got != local || from {
+		t.Errorf("ReconcileLink() = (%q, %v), want (%q, false) for an empty telemt link entry", got, from, local)
 	}
 }

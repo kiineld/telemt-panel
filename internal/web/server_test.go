@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -193,6 +194,37 @@ func TestCreateProxyRejectsReservedPort(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "reserved") {
 		t.Errorf("body should explain the port is reserved:\n%s", rec.Body.String())
+	}
+}
+
+// TestCreateProxySurfacesPortConflictClearly covers Finding 5: a raw Docker
+// port-conflict string from Runtime.Start must not reach the operator
+// verbatim. postCreate must recognize proxy.ErrPortConflict and show a clear
+// panel-level message naming the port instead.
+func TestCreateProxySurfacesPortConflictClearly(t *testing.T) {
+	h, auth, _, fake := newTestServerWithFake(t)
+	c := loginCookie(t, h, auth)
+	adm, _ := auth.Session(context.Background(), c.Value)
+	_ = auth.ChangePassword(context.Background(), adm.ID, "a-long-password")
+
+	fake.FailStart = errors.New(`Bind for 0.0.0.0:14444 failed: port is already allocated`)
+
+	form := url.Values{"name": {"x"}, "port": {"14444"}, "tls_domain": {"a.com"}}
+	req := httptest.NewRequest(http.MethodPost, "/proxies", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(c)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body:\n%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "Bind for 0.0.0.0") {
+		t.Errorf("raw Docker daemon error leaked to the operator:\n%s", body)
+	}
+	if !strings.Contains(body, "14444") || !strings.Contains(body, "already in use") {
+		t.Errorf("body should clearly name the port conflict:\n%s", body)
 	}
 }
 

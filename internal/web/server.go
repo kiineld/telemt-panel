@@ -42,6 +42,12 @@ type page struct {
 	Proxy *store.Proxy
 	Stats poller.Snapshot
 	Link  string
+	// LinkOK is false when Link has nothing usable to show: no telemt
+	// self-reported link yet, and PublicHost unset (so the local fallback
+	// would just be the literal placeholder host "SERVER-IP"). Templates
+	// must not render Link or QR as a real, copyable link when this is
+	// false — see linkFor in handlers_proxy.go.
+	LinkOK bool
 	// QR is a data: URI. html/template's contextual autoescaper treats data:
 	// URIs in a src attribute as unsafe by default and silently replaces
 	// them with "#ZgotmplZ" — safe framework behavior in general (a data:
