@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -225,6 +226,97 @@ func TestChangePassword(t *testing.T) {
 	}
 	if _, _, err := a.Login(ctx, "1.2.3.4", "admin", pw); !errors.Is(err, ErrBadCredentials) {
 		t.Error("the old password still works after a change")
+	}
+}
+
+// TestRecordFailureMapSizeIsBounded is the regression test for the Important
+// finding: a botnet failing one login from each of many distinct source IPs
+// must not grow the attempts map without bound.
+func TestRecordFailureMapSizeIsBounded(t *testing.T) {
+	a, _ := newAuth(t)
+
+	old := maxTrackedIPs
+	maxTrackedIPs = 50
+	t.Cleanup(func() { maxTrackedIPs = old })
+
+	for i := 0; i < 10*maxTrackedIPs; i++ {
+		a.recordFailure(fmt.Sprintf("10.%d.%d.%d", i/65536, (i/256)%256, i%256))
+	}
+
+	a.mu.Lock()
+	n := len(a.attempts)
+	a.mu.Unlock()
+	if n > maxTrackedIPs {
+		t.Fatalf("tracked IPs = %d, want <= %d (cap)", n, maxTrackedIPs)
+	}
+}
+
+// TestRateLimitSurvivesTableAtCapacity proves the anti-gaming property the
+// finding asked for explicitly: once an IP has accrued failures, flooding
+// the table with unrelated IPs past its cap must not evict that IP's entry
+// and reset its counter. If it could, an attacker would flood the table with
+// throwaway source IPs specifically to un-limit the IP they are actually
+// brute-forcing.
+func TestRateLimitSurvivesTableAtCapacity(t *testing.T) {
+	a, _ := newAuth(t)
+
+	old := maxTrackedIPs
+	maxTrackedIPs = 10
+	t.Cleanup(func() { maxTrackedIPs = old })
+
+	const target = "9.9.9.9"
+	for i := 0; i < maxAttempts; i++ {
+		a.recordFailure(target)
+	}
+	if !a.limited(target) {
+		t.Fatal("target should already be rate limited before the flood")
+	}
+
+	// Flood far more distinct IPs than the cap allows, all after the target
+	// was already tracked.
+	for i := 0; i < 1000; i++ {
+		a.recordFailure(fmt.Sprintf("10.1.%d.%d", i/256, i%256))
+	}
+
+	a.mu.Lock()
+	n := len(a.attempts)
+	a.mu.Unlock()
+	if n > maxTrackedIPs {
+		t.Fatalf("tracked IPs = %d, want <= %d (cap)", n, maxTrackedIPs)
+	}
+	if !a.limited(target) {
+		t.Error("flooding the table with other IPs undid rate limiting for an already-tracked IP")
+	}
+}
+
+// TestLoginStillRateLimitsAfterTableAtCapacity exercises the same property
+// end-to-end through Login rather than reaching into the unexported map.
+// Every Login call here pays real argon2id cost (that is the point of the
+// timing-safe design in Login/VerifyPassword), so the flood is kept small —
+// a few multiples of a tiny maxTrackedIPs — rather than the thousands used
+// in the cheaper, map-only tests above.
+func TestLoginStillRateLimitsAfterTableAtCapacity(t *testing.T) {
+	a, _ := newAuth(t)
+	ctx := context.Background()
+	_, _ = a.Bootstrap(ctx)
+
+	old := maxTrackedIPs
+	maxTrackedIPs = 5
+	t.Cleanup(func() { maxTrackedIPs = old })
+
+	const target = "9.9.9.9"
+	for i := 0; i < maxAttempts; i++ {
+		if _, _, err := a.Login(ctx, target, "admin", "bad"); !errors.Is(err, ErrBadCredentials) {
+			t.Fatalf("attempt %d error = %v, want ErrBadCredentials", i, err)
+		}
+	}
+
+	for i := 0; i < 4*maxTrackedIPs; i++ {
+		_, _, _ = a.Login(ctx, fmt.Sprintf("10.2.0.%d", i), "admin", "bad")
+	}
+
+	if _, _, err := a.Login(ctx, target, "admin", "bad"); !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("target Login() error = %v, want ErrRateLimited even after the table filled up", err)
 	}
 }
 

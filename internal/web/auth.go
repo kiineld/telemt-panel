@@ -32,7 +32,20 @@ const (
 
 	maxAttempts   = 5
 	attemptWindow = 15 * time.Minute
+
+	// sweepScan bounds how many map entries recordFailure inspects per call
+	// when reclaiming room from expired entries. Go randomizes map iteration
+	// order per range, so repeated calls sweep different parts of the table
+	// over time: an amortised sweep piggybacked on the request path, with no
+	// background goroutine/ticker to start or shut down.
+	sweepScan = 8
 )
+
+// maxTrackedIPs bounds the attempts map itself (see the doc comment on
+// recordFailure for why a bound, not just a sweep, is required). It is a var
+// rather than a const purely so tests can shrink it and exercise the cap
+// without needing tens of thousands of iterations.
+var maxTrackedIPs = 100_000
 
 // argon2id parameters. Memory dominates cost; 64 MiB keeps login well under
 // 100ms on a small VPS while staying expensive to brute force.
@@ -261,16 +274,84 @@ func (a *Auth) limited(ip string) bool {
 	return r.count >= maxAttempts
 }
 
+// recordFailure tracks one failed login attempt for ip.
+//
+// The attempts map used to have no eviction path except limited()'s lazy
+// delete, which only fires when the *same* IP is queried again after its
+// window expired. An IP that fails once and is never seen again left a
+// permanent entry: a botnet making one failed login from each of many source
+// IPs could grow the table without bound until the process was OOM-killed —
+// severe here, since the panel holds the Docker socket and losing the
+// process also stops the reconcile loop and stats poller for every proxy.
+//
+// The fix is two parts, both required: an amortised sweep of expired entries
+// (evictExpiredLocked, run on every call so the table shrinks on its own
+// during ordinary traffic) PLUS a hard cap (maxTrackedIPs) that the table can
+// never exceed regardless of how fast an attacker floods it. A sweep alone
+// cannot bound memory — an attacker who floods faster than the sweep
+// reclaims space would still win — so the cap is what actually guarantees a
+// ceiling.
+//
+// When the table is full and ip is not already tracked, room is made *only*
+// by evicting entries that are already expired; a live (unexpired) entry is
+// never evicted to make space for a new one. This is deliberate: an
+// evict-something-when-full policy (e.g. evict oldest, evict random) can be
+// gamed by an attacker who floods the table with fresh IPs specifically to
+// force out the entry for the IP they are actually trying to brute-force,
+// resetting that IP's failure counter and undoing the limiting protecting
+// it. Restricting eviction to expired entries closes that: nothing an
+// attacker does with *other* IPs can touch an existing, still-within-window
+// entry.
+//
+// The tradeoff — and this is the documented bounded weakness the brief asks
+// for — is that once the table is genuinely full of live (unexpired)
+// entries, a brand-new IP's failed attempt goes untracked rather than
+// evicting something to make room: it is not rate-limited until the table
+// has room again (an entry expires, or one is swept). That only matters once
+// an attacker is already sustaining maxTrackedIPs *simultaneous* live
+// attackers within one attemptWindow, at which point the untracked IPs are a
+// bounded slice of a very large ongoing attack, not an unbounded resource
+// exhaustion — and every IP that had already accrued failures before the
+// table filled stays fully protected, which is the property that matters
+// most: an attacker cannot un-limit a target by flooding around it.
 func (a *Auth) recordFailure(ip string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	r, ok := a.attempts[ip]
-	if !ok || time.Since(r.first) > attemptWindow {
-		a.attempts[ip] = &attemptRecord{count: 1, first: time.Now()}
+	a.evictExpiredLocked()
+
+	if r, ok := a.attempts[ip]; ok {
+		if time.Since(r.first) > attemptWindow {
+			r.count, r.first = 1, time.Now()
+		} else {
+			r.count++
+		}
 		return
 	}
-	r.count++
+
+	if len(a.attempts) >= maxTrackedIPs {
+		// Table full of live entries and ip isn't one of them: refuse to
+		// track this attempt rather than evict a live entry. See the doc
+		// comment above.
+		return
+	}
+	a.attempts[ip] = &attemptRecord{count: 1, first: time.Now()}
+}
+
+// evictExpiredLocked removes up to sweepScan expired entries from the
+// attempts map. Callers must hold a.mu. See recordFailure's doc comment.
+func (a *Auth) evictExpiredLocked() {
+	n := 0
+	now := time.Now()
+	for ip, r := range a.attempts {
+		if n >= sweepScan {
+			return
+		}
+		n++
+		if now.Sub(r.first) > attemptWindow {
+			delete(a.attempts, ip)
+		}
+	}
 }
 
 func (a *Auth) clearFailures(ip string) {
