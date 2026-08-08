@@ -30,6 +30,23 @@ func (s *stubClient) PatchUser(context.Context, string, client.PatchUser) (clien
 	return client.UserInfo{}, nil
 }
 
+// cancelingHealthClient simulates a caller disconnecting while Create is
+// polling for health: its first Health call cancels the very context Create
+// was invoked with, then reports unhealthy, exactly like an HTTP client that
+// hangs up mid-request.
+type cancelingHealthClient struct{ cancel context.CancelFunc }
+
+func (c *cancelingHealthClient) Health(context.Context) error {
+	c.cancel()
+	return errors.New("connection refused")
+}
+func (c *cancelingHealthClient) Users(context.Context) ([]client.UserInfo, error) {
+	return nil, nil
+}
+func (c *cancelingHealthClient) PatchUser(context.Context, string, client.PatchUser) (client.UserInfo, error) {
+	return client.UserInfo{}, nil
+}
+
 func newService(t *testing.T, fake *docker.Fake, stub *stubClient) (*Service, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -232,6 +249,61 @@ func TestCreateKeepsContainerOnHealthTimeout(t *testing.T) {
 	}
 	if fake.Count() != 1 {
 		t.Errorf("fake.Count() = %d, want 1 — the container must be kept for log inspection", fake.Count())
+	}
+}
+
+// If the caller's context is cancelled while Create is polling for health —
+// an HTTP client disconnecting during the up-to-30s wait, for example — the
+// container is still past the rollback boundary and must still be kept, and
+// the terminal state commit must still land. A caller-cancelled ctx must not
+// leave the row stuck at StateCreating: Reconcile treats that as an
+// abandoned mid-create and deletes it, orphaning a live container.
+func TestCreateCommitsErrorStateWhenContextCancelledDuringHealthWait(t *testing.T) {
+	fake := docker.NewFake()
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "panel.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	svc := New(Deps{
+		Store:       st,
+		Runtime:     fake,
+		Cfg:         config.Config{DataDir: dir, Network: "mtpanel_net", NetworkSubnet: "172.28.0.0/16", TelemtImage: "img", PublicHost: "1.2.3.4", ReservedPorts: []int{80, 8443}},
+		HostDataDir: dir,
+		NewClient: func(store.Proxy, string) TelemtClient {
+			return &cancelingHealthClient{cancel: cancel}
+		},
+		Now:          time.Now,
+		HealthBudget: 50 * time.Millisecond,
+	})
+
+	p, err := svc.Create(ctx, CreateRequest{
+		Name: "x", Port: freePort(t), TLSDomain: "a.com",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v, want nil even though ctx was cancelled during the health wait", err)
+	}
+	if p.State != store.StateError {
+		t.Errorf("State = %q, want error", p.State)
+	}
+	if p.StateMessage == "" {
+		t.Error("StateMessage should explain the health failure")
+	}
+	if fake.Count() != 1 {
+		t.Errorf("fake.Count() = %d, want 1 — the container must be kept for log inspection", fake.Count())
+	}
+
+	stored, err := st.GetProxy(context.Background(), p.ID)
+	if err != nil {
+		t.Fatalf("GetProxy: %v", err)
+	}
+	if stored.State != store.StateError {
+		t.Errorf("stored State = %q, want error — StateCreating here means the terminal UpdateProxy was lost to context cancellation, orphaning a live container", stored.State)
 	}
 }
 

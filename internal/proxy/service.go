@@ -190,7 +190,14 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (store.Proxy, e
 		p.State = store.StateRunning
 		p.StateMessage = ""
 	}
-	if err := s.deps.Store.UpdateProxy(ctx, p); err != nil {
+	// This commit must survive caller cancellation: waitHealthy can return
+	// ctx.Err() if the caller disconnects mid-poll, but the container is
+	// already kept past this point, and Create has promised a nil error for
+	// that case. Committing against the live ctx here would both break that
+	// promise and — worse — leave the row stuck at StateCreating, which
+	// Reconcile treats as an abandoned create and deletes, orphaning a
+	// perfectly live container.
+	if err := s.deps.Store.UpdateProxy(context.WithoutCancel(ctx), p); err != nil {
 		return store.Proxy{}, err
 	}
 	return p, nil
