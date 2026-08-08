@@ -43,7 +43,13 @@ func main() {
 	hostDataDir := os.Getenv("PANEL_HOST_DATA_DIR")
 	if hostDataDir == "" {
 		hostDataDir = cfg.DataDir
-		log.Printf("warning: PANEL_HOST_DATA_DIR is unset; proxy config mounts will use %s", hostDataDir)
+	}
+	// ValidateHostDataDir catches both the plain-unset case above and the
+	// quieter one where PANEL_HOST_DATA_DIR is non-empty but still wrong —
+	// e.g. compose's ${PWD}/data collapsing to the container's own /data
+	// when $PWD is unset (see its doc comment and Finding 6).
+	if warn := config.ValidateHostDataDir(hostDataDir, cfg.DataDir); warn != "" {
+		log.Printf("warning: %s", warn)
 	}
 
 	svc := proxy.New(proxy.Deps{

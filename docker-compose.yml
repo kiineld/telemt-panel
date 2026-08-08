@@ -35,7 +35,21 @@ services:
       - MTPANEL_SUBNET=172.28.0.0/16
       - TELEMT_IMAGE=${TELEMT_IMAGE:-ghcr.io/telemt/telemt:latest}
       - PANEL_PUBLIC_HOST=${PANEL_PUBLIC_HOST:-}
-      - PANEL_HOST_DATA_DIR=${PWD}/data
+      # Bind mount sources are resolved by the Docker daemon against the
+      # HOST filesystem, so the panel needs the host's own path to ./data,
+      # not the container's. ${PWD}/data works for the documented
+      # interactive install (`cd telemt-panel && docker compose up -d`),
+      # but $PWD is not reliably set outside an interactive shell — e.g. a
+      # systemd unit invoking `docker compose up` — where it can render as
+      # an empty string, silently collapsing this to "/data". That is
+      # non-empty, so main.go's "PANEL_HOST_DATA_DIR is unset" warning never
+      # fires, yet it is almost never a real host path: Docker creates it
+      # anyway (empty) and every proxy's telemt starts with no config. Set
+      # PANEL_HOST_DATA_DIR explicitly in .env (see .env.example) to sidestep
+      # $PWD entirely for exactly this case; the panel also validates the
+      # final value at startup and warns loudly if it still looks
+      # implausible.
+      - PANEL_HOST_DATA_DIR=${PANEL_HOST_DATA_DIR:-${PWD}/data}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./data:/data

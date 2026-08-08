@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -56,5 +57,39 @@ func TestLoadRejectsBadInterval(t *testing.T) {
 	t.Setenv("PANEL_POLL_INTERVAL", "banana")
 	if _, err := Load(); err == nil {
 		t.Fatal("Load() error = nil, want error for unparseable interval")
+	}
+}
+
+// TestValidateHostDataDir covers Finding 6: docker-compose.yml's
+// PANEL_HOST_DATA_DIR=${PWD}/data collapses to the literal string "/data"
+// when $PWD is unset or empty — non-empty, so a plain "is it set" check
+// would miss it, but it happens to coincide with the panel's own
+// in-container data directory, which is the signal this checks for.
+func TestValidateHostDataDir(t *testing.T) {
+	cases := []struct {
+		name          string
+		hostDataDir   string
+		containerDir  string
+		wantWarning   bool
+		wantSubstring string
+	}{
+		{"unset", "", "/data", true, "unset"},
+		{"collapsed to container dir", "/data", "/data", true, "matches the panel's own in-container data directory"},
+		{"relative path", "data", "/data", true, "not an absolute path"},
+		{"plausible host path", "/opt/telemt-panel/data", "/data", false, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := ValidateHostDataDir(c.hostDataDir, c.containerDir)
+			if c.wantWarning && got == "" {
+				t.Fatalf("ValidateHostDataDir(%q, %q) = \"\", want a warning", c.hostDataDir, c.containerDir)
+			}
+			if !c.wantWarning && got != "" {
+				t.Errorf("ValidateHostDataDir(%q, %q) = %q, want no warning for a plausible path", c.hostDataDir, c.containerDir, got)
+			}
+			if c.wantSubstring != "" && !strings.Contains(got, c.wantSubstring) {
+				t.Errorf("ValidateHostDataDir(%q, %q) = %q, want it to mention %q", c.hostDataDir, c.containerDir, got, c.wantSubstring)
+			}
+		})
 	}
 }
