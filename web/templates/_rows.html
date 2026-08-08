@@ -5,7 +5,7 @@
   <article class="card row state-{{.Proxy.State}}">
     <div class="row-main">
       <a class="name" href="/proxies/{{.Proxy.ID}}">{{.Proxy.Name}}</a>
-      <span class="addr">{{$.Host}}:{{.Proxy.Port}}</span>
+      <span class="addr">{{.Host}}:{{.Proxy.Port}}</span>
       <span class="domain">{{.Proxy.TLSDomain}}</span>
       <span class="badge">{{.Proxy.State}}</span>
     </div>

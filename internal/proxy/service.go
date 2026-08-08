@@ -232,11 +232,22 @@ func (s *Service) Link(p store.Proxy) string {
 // resolves the host itself via its own external-IP detection, which is what
 // makes the zero-config (no PANEL_PUBLIC_HOST) install path work at all.
 //
+// That preference is deliberately conditional on publicHostSet being false.
+// An operator who set PANEL_PUBLIC_HOST did so precisely because telemt's
+// own external-IP detection guesses wrong for their setup — behind NAT,
+// behind a load balancer, or anywhere the container can't see the address
+// clients actually need. Preferring telemt's value unconditionally would
+// silently discard that explicit, authoritative choice the moment the first
+// poller sweep lands (the correct link would render for a few seconds, then
+// flip to telemt's wrong guess) — turning PublicHost from an override into
+// pure decoration. So: PublicHost set → local wins, always. PublicHost unset
+// → telemt's self-reported link wins once available, exactly as before.
+//
 // fromTelemt reports whether telemtLinks supplied the result, which callers
 // use to decide whether an empty/placeholder local link is still acceptable
 // to show (see the web package's linkFor).
-func ReconcileLink(local string, telemtLinks []string) (l string, fromTelemt bool) {
-	if len(telemtLinks) > 0 && telemtLinks[0] != "" {
+func ReconcileLink(local string, publicHostSet bool, telemtLinks []string) (l string, fromTelemt bool) {
+	if !publicHostSet && len(telemtLinks) > 0 && telemtLinks[0] != "" {
 		return telemtLinks[0], true
 	}
 	return local, false

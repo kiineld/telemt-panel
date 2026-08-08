@@ -56,7 +56,7 @@ func (s *server) getProxy(w http.ResponseWriter, r *http.Request, adm store.Admi
 	}
 	logs, _ := s.Proxy.Logs(r.Context(), p.ID)
 
-	s.render(w, http.StatusOK, "proxy.html", detailPage(adm, p, snap, link, linkOK, qr, logs, s.host()))
+	s.render(w, http.StatusOK, "proxy.html", detailPage(adm, p, snap, link, linkOK, qr, logs, s.displayHost(link, linkOK)))
 }
 
 // detailPage fills the page fields the detail view needs beyond what every

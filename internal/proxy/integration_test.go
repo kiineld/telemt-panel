@@ -215,7 +215,7 @@ func TestRealDockerLifecycleWithEmptyPublicHost(t *testing.T) {
 	// computed link (which, with PublicHost empty, is the SERVER-IP
 	// placeholder) reconciled against telemt's own reported link.
 	localLink := svc.Link(p)
-	surfaced, fromTelemt := ReconcileLink(localLink, users[0].Links.TLS)
+	surfaced, fromTelemt := ReconcileLink(localLink, false, users[0].Links.TLS)
 	t.Logf("local link:    %s", localLink)
 	t.Logf("surfaced link: %s", surfaced)
 

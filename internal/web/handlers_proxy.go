@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,11 @@ type row struct {
 	Stats   poller.Snapshot
 	Link    string
 	LinkOK  bool
+	// Host is the informational "host:port" address shown next to the link
+	// (not itself copyable or in the QR). It mirrors whichever host the link
+	// actually uses — see displayHost — so this line never shows a different
+	// address than the link below/beside it.
+	Host    string
 	Traffic string
 }
 
@@ -34,7 +40,7 @@ func (s *server) buildRows(r *http.Request) ([]row, error) {
 		link, ok := s.linkFor(p, snap)
 		out = append(out, row{
 			Proxy: p, Stats: snap,
-			Link: link, LinkOK: ok,
+			Link: link, LinkOK: ok, Host: s.displayHost(link, ok),
 			Traffic: formatTraffic(snap.TotalOctets, p.DataQuotaBytes),
 		})
 	}
@@ -48,6 +54,27 @@ func (s *server) host() string {
 	return "SERVER-IP"
 }
 
+// displayHost is the host shown on the informational "host:port" line next
+// to a proxy's link. When a real link is showing, it reads the host straight
+// out of that link — via the same "server" query parameter link.FakeTLS
+// wrote — instead of separately recomputing it, so this line can never
+// disagree with the link/QR next to it. That divergence was possible before:
+// with PublicHost unset, the zero-config path can show telemt's own
+// self-reported host in the link (see linkFor/proxy.ReconcileLink) while
+// this line fell back to the placeholder "SERVER-IP", showing the operator
+// two different hosts on one row. Falls back to the placeholder only when
+// there is no usable link at all to read a host from.
+func (s *server) displayHost(link string, linkOK bool) string {
+	if linkOK {
+		if u, err := url.Parse(link); err == nil {
+			if h := u.Query().Get("server"); h != "" {
+				return h
+			}
+		}
+	}
+	return s.host()
+}
+
 // linkFor decides which tg:// link, if any, to show for a proxy, via
 // proxy.ReconcileLink — see its doc comment for the "prefer telemt's
 // self-reported link" reasoning.
@@ -58,11 +85,12 @@ func (s *server) host() string {
 // silently reach nobody if copied or scanned. ok is false in that case so
 // the caller shows a warning instead of a broken link and its QR code.
 func (s *server) linkFor(p store.Proxy, snap poller.Snapshot) (link string, ok bool) {
+	publicHostSet := s.Cfg.PublicHost != ""
 	local := ""
-	if s.Cfg.PublicHost != "" {
+	if publicHostSet {
 		local = s.Proxy.Link(p)
 	}
-	l, fromTelemt := proxy.ReconcileLink(local, snap.Links)
+	l, fromTelemt := proxy.ReconcileLink(local, publicHostSet, snap.Links)
 	return l, fromTelemt || l != ""
 }
 

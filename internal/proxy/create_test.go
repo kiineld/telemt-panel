@@ -357,17 +357,41 @@ func TestLinkFallsBackToPlaceholderHost(t *testing.T) {
 	}
 }
 
-func TestReconcileLinkPrefersTelemt(t *testing.T) {
+// TestReconcileLinkPrefersTelemtWhenPublicHostUnset covers the zero-config
+// path (Finding 1): with no PANEL_PUBLIC_HOST, the local link is only ever
+// the SERVER-IP placeholder, so telemt's self-reported link should win once
+// available.
+func TestReconcileLinkPrefersTelemtWhenPublicHostUnset(t *testing.T) {
 	local := "tg://proxy?server=SERVER-IP&port=443&secret=eeaa"
 	telemt := "tg://proxy?server=203.0.113.5&port=443&secret=eeaa"
 
-	if got, from := ReconcileLink(local, []string{telemt}); got != telemt || !from {
+	if got, from := ReconcileLink(local, false, []string{telemt}); got != telemt || !from {
 		t.Errorf("ReconcileLink() = (%q, %v), want (%q, true)", got, from, telemt)
 	}
-	if got, from := ReconcileLink(local, nil); got != local || from {
+	if got, from := ReconcileLink(local, false, nil); got != local || from {
 		t.Errorf("ReconcileLink() = (%q, %v), want (%q, false) when telemt has no link yet", got, from, local)
 	}
-	if got, from := ReconcileLink(local, []string{""}); got != local || from {
+	if got, from := ReconcileLink(local, false, []string{""}); got != local || from {
 		t.Errorf("ReconcileLink() = (%q, %v), want (%q, false) for an empty telemt link entry", got, from, local)
+	}
+}
+
+// TestReconcileLinkKeepsExplicitPublicHost is the regression test for the
+// bug the second review round caught: ReconcileLink used to prefer telemt's
+// link unconditionally, which silently overrode an operator's explicitly
+// set PANEL_PUBLIC_HOST — set precisely because telemt's own external-IP
+// detection guesses wrong for their setup (NAT, a load balancer, etc). With
+// PublicHost set, the local link must win even when telemt reports a
+// different one.
+func TestReconcileLinkKeepsExplicitPublicHost(t *testing.T) {
+	local := "tg://proxy?server=203.0.113.9&port=443&secret=eeaa"  // operator's PublicHost
+	telemt := "tg://proxy?server=10.0.0.5&port=443&secret=eeaa" // telemt's own (wrong) guess
+
+	got, from := ReconcileLink(local, true, []string{telemt})
+	if from {
+		t.Error("ReconcileLink() reported fromTelemt = true with PublicHost set; the operator's explicit host must never be silently overridden")
+	}
+	if got != local {
+		t.Errorf("ReconcileLink() = %q, want the operator's own link %q kept even though telemt reported a different one", got, local)
 	}
 }
