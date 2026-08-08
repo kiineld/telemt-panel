@@ -6,6 +6,7 @@ require (
 	github.com/docker/docker v27.3.1+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/google/uuid v1.6.0
+	golang.org/x/crypto v0.54.0
 	modernc.org/sqlite v1.56.0
 )
 
