@@ -1,0 +1,44 @@
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: mtpanel-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "8443:8443"
+    environment:
+      - PANEL_DOMAIN=${PANEL_DOMAIN:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data/caddy/data:/data
+      - ./data/caddy/config:/config
+    networks:
+      - mtpanel_net
+    depends_on:
+      - panel
+
+  panel:
+    build: .
+    image: telemt-panel:local
+    container_name: mtpanel
+    restart: unless-stopped
+    environment:
+      - PANEL_LISTEN=:8080
+      - PANEL_DATA_DIR=/data
+      - MTPANEL_NETWORK=mtpanel_net
+      - MTPANEL_SUBNET=172.28.0.0/16
+      - TELEMT_IMAGE=${TELEMT_IMAGE:-ghcr.io/telemt/telemt:latest}
+      - PANEL_PUBLIC_HOST=${PANEL_PUBLIC_HOST:-}
+      - PANEL_HOST_DATA_DIR=${PWD}/data
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/data
+    networks:
+      - mtpanel_net
+
+networks:
+  mtpanel_net:
+    name: mtpanel_net
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

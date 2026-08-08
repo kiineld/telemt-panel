@@ -1,0 +1,17 @@
+{
+	# ACME HTTP-01 runs on :80. The panel itself is served on :8443 so that
+	# host port 443 stays free for an MTProto proxy.
+	http_port 80
+	https_port 8443
+}
+
+{$PANEL_DOMAIN::8443} {
+	# With PANEL_DOMAIN unset this matches any host on :8443 and Caddy issues
+	# an internal self-signed certificate. Setting PANEL_DOMAIN switches it to
+	# a real Let's Encrypt certificate with no other change.
+	@nodomain expression {$PANEL_DOMAIN:""} == ""
+	tls internal {
+		on_demand
+	}
+	reverse_proxy panel:8080
+}
